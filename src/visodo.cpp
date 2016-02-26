@@ -40,6 +40,8 @@ THE SOFTWARE.
 #include <fstream>
 #include <string>
 
+#define CV3 0
+
 using namespace cv;
 using namespace std;
 
@@ -91,7 +93,7 @@ double getAbsoluteScale(int frame_id, int sequence_id, double z_cal)
   double x = 0, y = 0, z = 0;
   double x_prev, y_prev, z_prev;
   if (myfile.is_open()) {
-    while ((getline (myfile, line)) && (i<=frame_id)) {
+    while ((getline(myfile, line)) && (i <= frame_id)) {
       z_prev = z;
       x_prev = x;
       y_prev = y;
@@ -161,7 +163,12 @@ int main(int argc, char** argv)
 
   // recovering the pose and the essential matrix
   Mat E, R, t, mask;
+#if CV3
   E = findEssentialMat(points2, points1, K, RANSAC, 0.999, 1.0, mask);
+#else
+  Mat F = findFundamentalMat(points2, points1, FM_RANSAC, 3., 0.99, mask);
+  E = K.t() * F * K;
+#endif
   recoverPose(E, points2, points1, K, R, t, mask);
   cout << R << endl;
 
@@ -191,7 +198,13 @@ int main(int argc, char** argv)
     vector<uchar> status;
     featureTracking(prevImage, currImage, prevFeatures, currFeatures, status);
 
+#if CV3
     E = findEssentialMat(currFeatures, prevFeatures, K, RANSAC, 0.999, 1.0, mask);
+#else
+    Mat F = findFundamentalMat(currFeatures, prevFeatures, FM_RANSAC, 3., 0.99, mask);
+    E = K.t() * F * K;
+#endif
+
     recoverPose(E, currFeatures, prevFeatures, K, R, t, mask);
     cv::Mat euler;
     Rodrigues(R, euler);
