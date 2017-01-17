@@ -1,81 +1,103 @@
-/*
+#pragma once
 
-The MIT License
+#ifndef __MONO_VO_H__
+#define __MONO_VO_H__
 
-Copyright (c) 2015 Avi Singh
+#include "opencv2/core.hpp"
+#include "opencv2/cudaoptflow.hpp"
+#include "opencv2/cudaimgproc.hpp"
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+class CudaFeatureTraker {
 
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
+    cv::Ptr<cv::cuda::CornersDetector>        _detector;
+    cv::Ptr<cv::cuda::SparsePyrLKOpticalFlow> _pyrLK   ;
+    int                                       _nb_point;
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
+    static void _download(const cv::cuda::GpuMat& d_mat, std::vector<cv::Point2f>& vec) {
+        vec.resize(d_mat.cols);
+        cv::Mat mat(1, d_mat.cols, CV_32FC2, (void*)&vec[0]);
+        d_mat.download(mat);
+    }
+    static void _download(const cv::cuda::GpuMat& d_mat, std::vector<uchar>& vec) {
+        vec.resize(d_mat.cols);
+        cv::Mat mat(1, d_mat.cols, CV_8U, (void*)&vec[0]);
+        d_mat.download(mat);
+    }
 
-*/
+    static double _distance(const cv::Point2f & point1,const cv::Point2f & point2) {
+        return sqrt((point1.x - point2.x) * (point1.x - point2.x)
+                    +(point1.y - point2.y) * (point1.y - point2.y));
+    }
 
-#include "opencv2/video/tracking.hpp"
-#include "opencv2/imgproc/imgproc.hpp"
-#include "opencv2/highgui/highgui.hpp"
-#include "opencv2/features2d/features2d.hpp"
-#include "opencv2/calib3d/calib3d.hpp"
+public:
+    CudaFeatureTraker(int nb_point,int winsize ,int max_level,int iters) {
+        _detector = cv::cuda::createGoodFeaturesToTrackDetector(CV_8UC1, nb_point, 0.01);
+        _pyrLK    = cv::cuda::SparsePyrLKOpticalFlow::create(cv::Size(winsize, winsize), max_level, iters);
+    }
+    virtual ~CudaFeatureTraker() {}
+    void cuda_featureDetectionAndTraking(const cv::Mat & img_1,
+                                         const cv::Mat & img_2,
+                                         std::vector<cv::Point2f> & prev_points,
+                                         std::vector<cv::Point2f> & next_points,
+                                         std::vector<uchar>& status) {
+        cv::cuda::GpuMat frame0(img_1);
+        cv::cuda::GpuMat frame1(img_2);
+        cv::cuda::GpuMat prevPts;
+        cv::cuda::GpuMat nextPts;
+        cv::cuda::GpuMat gstatus;
+        std::vector<cv::Point2f> points[3];
+
+        cuda_featureDetection(frame0,prevPts);
+        cuda_featureTracking(frame0,frame1,prevPts,nextPts,gstatus);
+
+        cv::cuda::GpuMat gstatus_backtrack;
+        cv::cuda::GpuMat points_bt;
+        cuda_featureTracking(frame1,frame0,nextPts, points_bt, gstatus_backtrack);
+
+        points[0].resize(prevPts.cols);
+        _download(prevPts, points[0]);
+
+        points[1].resize(nextPts.cols);
+        _download(nextPts, points[1]);
+
+        points[2].resize(points_bt.cols);
+        _download(points_bt, points[2]);
+
+        std::vector<uchar> status_backtrack;
+        status.resize(gstatus.cols);
+        _download(gstatus, status);
+        status_backtrack.resize(gstatus_backtrack.cols);
+        _download(gstatus_backtrack, status_backtrack);
+
+        int indexCorrection = 0;
+
+        for (int i = 0; i < status.size(); i++) {
+            status[i] = status[i] & status_backtrack[i];
+        }
+
+        prev_points.clear();
+        next_points.clear();
+        for (int i = 0; i < status.size(); i++) {
+            if( status[i] && _distance(points[2][i],points[0][i]) < 1.5 ) {
+                prev_points.push_back(points[0][i]);
+                next_points.push_back(points[1][i]);
+            }
+        }
+        status.resize(next_points.size(),1);
+    }
+
+    void cuda_featureDetection(const cv::cuda::GpuMat & frame_gray, cv::cuda::GpuMat & pts) {
+        _detector->detect(frame_gray, pts);
+    }
+    void cuda_featureTracking(const cv::cuda::GpuMat & img_1,
+                              const cv::cuda::GpuMat & img_2,
+                              cv::cuda::GpuMat & d_prevPts,
+                              cv::cuda::GpuMat & d_nextPts,
+                              cv::cuda::GpuMat & d_status) {
+        _pyrLK->calc(img_1, img_2, d_prevPts, d_nextPts, d_status);
+    }
+
+};
 
 
-#include <iostream>
-#include <ctype.h>
-#include <algorithm> // for copy
-#include <iterator> // for ostream_iterator
-#include <vector>
-#include <ctime>
-#include <sstream>
-#include <fstream>
-#include <string>
-
-using namespace cv;
-using namespace std;
-
-void featureTracking(Mat img_1, Mat img_2, vector<Point2f>& points1, vector<Point2f>& points2, vector<uchar>& status)	{ 
-
-//this function automatically gets rid of points for which tracking fails
-
-  vector<float> err;					
-  Size winSize=Size(21,21);																								
-  TermCriteria termcrit=TermCriteria(TermCriteria::COUNT+TermCriteria::EPS, 30, 0.01);
-
-  calcOpticalFlowPyrLK(img_1, img_2, points1, points2, status, err, winSize, 3, termcrit, 0, 0.001);
-
-  //getting rid of points for which the KLT tracking failed or those who have gone outside the frame
-  int indexCorrection = 0;
-  for( int i=0; i<status.size(); i++)
-     {  Point2f pt = points2.at(i- indexCorrection);
-     	if ((status.at(i) == 0)||(pt.x<0)||(pt.y<0))	{
-     		  if((pt.x<0)||(pt.y<0))	{
-     		  	status.at(i) = 0;
-     		  }
-     		  points1.erase (points1.begin() + (i - indexCorrection));
-     		  points2.erase (points2.begin() + (i - indexCorrection));
-     		  indexCorrection++;
-     	}
-
-     }
-
-}
-
-
-void featureDetection(Mat img_1, vector<Point2f>& points1)	{   //uses FAST as of now, modify parameters as necessary
-  vector<KeyPoint> keypoints_1;
-  int fast_threshold = 20;
-  bool nonmaxSuppression = true;
-  FAST(img_1, keypoints_1, fast_threshold, nonmaxSuppression);
-  KeyPoint::convert(keypoints_1, points1, vector<int>());
-}
+#endif
