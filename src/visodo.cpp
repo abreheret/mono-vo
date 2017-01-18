@@ -52,7 +52,7 @@ using namespace std;
 int main_test()
 {
     //Create a random 3D scene
-    cv::Mat points3D(1, 160, CV_64FC4);
+    cv::Mat points3D(1, 16, CV_64FC4);
     cv::randu(points3D, cv::Scalar(-5.0, -5.0, 1.0, 1.0), cv::Scalar(5.0, 5.0, 10.0, 1.0 ));
 
 
@@ -61,8 +61,8 @@ int main_test()
     cv::Matx34d C2 = cv::Matx34d::eye();
     cv::Mat K = cv::Mat::eye(3, 3, CV_64F);
 
-    //C2(1, 3) = 2;
-    C2(2, 3) = 2;
+    C2(1, 3) = 1;
+    C2(2, 3) = -2;
 
     //Compute points projection
     std::vector<cv::Vec2d> points1;
@@ -162,7 +162,7 @@ void featureDetection(Mat img_1, vector<Point2f>& points1)
 using namespace cv;
 using namespace std;
 
-#define MIN_NUM_FEAT 2000
+#define MIN_NUM_FEAT 3000
 //#define PATH "D:/KITTI_VO/02/image_0/"
 #define PATH "../KITTI_00/"
 #define DATASET PATH"%06d.png"
@@ -228,7 +228,8 @@ Mat K = (Mat_<double>(3, 3) <<
          0       ,        0,       1);
 int main(int argc, char** argv)
 {
-    //main_test(); return 1;
+    main_test();
+
     char filename1[200];
     sprintf(filename1, DATASET, 0);
     std::vector<double> times = getTimes(PATH"times.txt");
@@ -250,7 +251,7 @@ int main(int argc, char** argv)
     vector<Point2f> currFeatures;
     featureDetection(img_1, prevFeatures);// detect features in img_1
     Mat R_f = Mat::eye(3,3,CV_64F);
-    Mat t_f = Mat::zeros(3,1,CV_64F);// the final rotation and tranlation vectors containing the
+    Mat t_f = Mat::zeros(3,1,CV_64F);// the final rotation and translation vectors containing the
     Mat traj = Mat::zeros(800,800, CV_8UC3);
 
 #if USE_CUDA
@@ -280,7 +281,8 @@ int main(int argc, char** argv)
         E = K.t() * F * K;
 #endif
         recoverPose(E, currFeatures, prevFeatures, K, R, t);
-        Mat tt = scales[numFrame] * (R * t) ;
+        double scale = scales[numFrame-1];
+        Mat tt = scale * (R * t) ;
         double distance = tt.at<double>(2)*tt.at<double>(2)+ tt.at<double>(0)*tt.at<double>(0) + tt.at<double>(1)*tt.at<double>(1);
         distance = sqrt(distance);
         double speed =(3.6*distance/delta_t)  ;
@@ -290,8 +292,8 @@ int main(int argc, char** argv)
         double pitch = TODEG *euler.at<double>(0)/delta_t;
         double yaw   = TODEG *euler.at<double>(1)/delta_t;
         double roll  = TODEG *euler.at<double>(2)/delta_t;
-        if ((scales[numFrame] > 0.1)&&(t.at<double>(2) > t.at<double>(0)) && (t.at<double>(2) > t.at<double>(1))) {
-            t_f = t_f + scales[numFrame] * (R_f * t);
+        if ((scale > 0.1)&&(t.at<double>(2) > t.at<double>(0)) && (t.at<double>(2) > t.at<double>(1))) {
+            t_f = t_f + scale * (R_f * t);
             R_f = R * R_f;
         } else {
             cout << "scale below 0.1, or incorrect translation" << endl;
@@ -325,5 +327,6 @@ int main(int argc, char** argv)
             break;
         prevFeatures = currFeatures;
     }
+    imwrite("result.png",traj);
     return 0;
 }
