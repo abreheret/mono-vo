@@ -7,6 +7,8 @@
 #include "opencv2/cudaoptflow.hpp"
 #include "opencv2/cudaimgproc.hpp"
 
+int main_test(int nb_point,bool methode);
+
 class CudaFeatureTraker {
 
     cv::Ptr<cv::cuda::CornersDetector>        _detector;
