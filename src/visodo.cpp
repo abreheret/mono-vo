@@ -162,7 +162,7 @@ void featureDetection(Mat img_1, vector<Point2f>& points1)
 using namespace cv;
 using namespace std;
 
-#define MIN_NUM_FEAT 3000
+#define MIN_NUM_FEAT 2000
 //#define PATH "D:/KITTI_VO/02/image_0/"
 #define PATH "../KITTI_00/"
 #define DATASET PATH"%06d.png"
