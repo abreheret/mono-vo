@@ -220,12 +220,18 @@ int main(int argc, char** argv)
         double distance = tt.at<double>(2)*tt.at<double>(2)+ tt.at<double>(0)*tt.at<double>(0) + tt.at<double>(1)*tt.at<double>(1);
         distance = sqrt(distance);
         double speed =(3.6*distance/delta_t)  ;
-        cv::Mat euler;
-        Rodrigues(R, euler);
 #define TODEG (180.f/CV_PI)
-        double pitch = TODEG *euler.at<double>(0)/delta_t;
-        double yaw   = TODEG *euler.at<double>(1)/delta_t;
-        double roll  = TODEG *euler.at<double>(2)/delta_t;
+
+        double r11 = R.at<double>(0,0);
+        double r21 = R.at<double>(1,0);
+        double r31 = R.at<double>(2,0);
+        double r32 = R.at<double>(2,1);
+        double r33 = R.at<double>(2,2);
+
+        double pitch = TODEG *atan2(  r32,r33           ) / delta_t;
+        double yaw   = TODEG *atan2( -r31,sqrt(r32+r33) ) / delta_t;
+        double roll  = TODEG *atan2(  r21,r11           ) / delta_t;
+
         if ((scale > 0.1)&&(t.at<double>(2) > t.at<double>(0)) && (t.at<double>(2) > t.at<double>(1))) {
             t_f = t_f + scale * (R_f * t);
             R_f = R * R_f;
