@@ -48,69 +48,120 @@ THE SOFTWARE.
 using namespace cv;
 using namespace std;
 
+cv::Mat rx(double theta) {
+    cv::Mat R_x = (cv::Mat_<double>(3,3) <<
+                   1, 0         , 0,
+                   0, cos(theta), -sin(theta),
+                   0, sin(theta), cos(theta));
+    return R_x;
+}
+
+cv::Mat ry(double theta) {
+    cv::Mat R_y = (cv::Mat_<double>(3,3) <<
+                   cos(theta) ,    0, sin(theta),
+                   0          ,    1, 0         ,
+                   -sin(theta),    0, cos(theta));
+    return R_y;
+}
+cv::Mat rz(double theta) {
+    cv::Mat R_z = (cv::Mat_<double>(3,3) <<
+                   cos(theta),-sin(theta), 0,
+                   sin(theta), cos(theta), 0,
+                   0         , 0         , 1);
+    return R_z;
+}
+
+cv::Mat createMat3x4(const cv::Mat & m3x3,const cv::Mat & m3x1) {
+    cv::Mat mat(3,4,m3x3.type());
+    for (int i = 0 ; i < 3 ; i++)
+        m3x3.col(i).copyTo(mat.col(i));
+    m3x1.col(0).copyTo(mat.col(3));
+    return mat;
+}
 
 int main_test()
 {
     //Create a random 3D scene
-    cv::Mat points3D(1, 16, CV_64FC4);
-    cv::randu(points3D, cv::Scalar(-5.0, -5.0, 1.0, 1.0), cv::Scalar(5.0, 5.0, 10.0, 1.0 ));
+    cv::Mat points3D(16,1, CV_64FC4);
+    cv::randu(points3D, cv::Scalar(-5.0, -5.0, 2.0, 1.0), cv::Scalar(5.0, 5.0, 20.0, 1.0 ));
 
 
     //Compute 2 camera matrices
-    cv::Matx34d C1 = cv::Matx34d::eye();
-    cv::Matx34d C2 = cv::Matx34d::eye();
+    cv::Mat_<double> C1(3,4,CV_64F),C2(3,4,CV_64F);
     cv::Mat K = cv::Mat::eye(3, 3, CV_64F);
 
-    C2(1, 3) = 1;
-    C2(2, 3) = -2;
+    C1 <<
+       1 , 0 , 0 , 0,
+       0 , 1 , 0 , 0,
+       0 , 0 , 1 , 0;
+    C2 <<
+       1 , 0 , 0 , 0,
+       0 , 1 , 0 , 2,
+       0 , 0 , 1 ,-3;
+
+
+
 
     //Compute points projection
     std::vector<cv::Vec2d> points1;
     std::vector<cv::Vec2d> points2;
+    printf(" X \t Y \t Z \t| \t u1 \t v1 \t u2 \t v2\n");
+    for(int i = 0; i < points3D.rows; i++) {
+        cv::Vec4d in = points3D.at<cv::Vec4d>(i);
+        cv::Mat point3d(4,1, CV_64F);
+        point3d.at<double>(0) = in [0];
+        point3d.at<double>(1) = in [1];
+        point3d.at<double>(2) = in [2];
+        point3d.at<double>(3) = in [3];
 
-    for(int i = 0; i < points3D.cols; i++)
-    {
-        cv::Vec3d hpt1 = C1*points3D.at<cv::Vec4d>(0, i);
-        cv::Vec3d hpt2 = C2*points3D.at<cv::Vec4d>(0, i);
+        cv::Mat hpt1 = C1*point3d;
+        cv::Mat hpt2 = C2*point3d;
 
-        hpt1 /= hpt1[2];
-        hpt2 /= hpt2[2];
+        hpt1 /= hpt1.at<double>(2);
+        hpt2 /= hpt2.at<double>(2);
 
-        cv::Vec2d p1(hpt1[0], hpt1[1]);
-        cv::Vec2d p2(hpt2[0], hpt2[1]);
+        points1.push_back(cv::Vec2d(hpt1.at<double>(0),hpt1.at<double>(1)));
+        points2.push_back(cv::Vec2d(hpt2.at<double>(0),hpt2.at<double>(1)));
 
-        points1.push_back(p1);
-        points2.push_back(p2);
-
-        std::cout << p1[0] << "\t" << p1[1] << "--"<< p2[0] << "\t" << p2[1] <<  std::endl;
+        cv::Vec4d p3d = point3d;//.at<cv::Vec4d>(0,i);
+        //std::cout << p1[0] << "\t" << p1[1] << "\t"<< p2[0] << "\t" << p2[1] <<  std::endl;
+        printf("%0.3f\t%0.3f\t%0.3f\t| \t%0.3f\t%0.3f\t%0.3f\t%0.3f\n",p3d[0],p3d[1],p3d[2],points1[i][0],points1[i][1],points2[i][0],points2[i][1]);
     }
 
     //Print
     std::cout << C1 << std::endl;
-    std::cout << C2 << std::endl;
+    std::cout << C2 << std::endl << std::endl ;
 
     //Recover essential
-    cv::Mat E = cv::findEssentialMat(points1, points2, K, cv::FM_RANSAC, 0.99, 1);
-    cv::Mat F = cv::findFundamentalMat(points1, points2, cv::FM_RANSAC, 1, 0.9);
+    cv::Mat E = cv::findEssentialMat  (points1, points2, K, cv::FM_RANSAC, 0.99, 1);
+    cv::Mat F = cv::findFundamentalMat(points1, points2, cv::FM_RANSAC, 3, 0.9);
     F = K.t() * F * K;
 
-    std::cout << "E: " << E << std::endl;
-    std::cout << "F: " << F << std::endl;
+    cv::Mat Rf;
+    cv::Mat tf;
+    cv::recoverPose(F, points1, points2, K, Rf, tf);
+    cv::Mat P2 = createMat3x4(Rf,tf);
+    cv::Mat points_trianguled;
+    cv::triangulatePoints(C1,P2,points1,points2,points_trianguled);
+    for(int i = 0; i < points_trianguled.cols; i++) {
+        points_trianguled.col(i) = points_trianguled.col(i) / points_trianguled.at<double>(3,i) ;
+    }
 
-    cv::Mat R;
-    cv::Mat t;
-    cv::recoverPose(F, points1, points2, K, R, t);
-
-    std::cout << "R: " << R << std::endl;
-    std::cout << "t: " << t << std::endl;
-
-
-    cv::Mat R5;
-    cv::Mat t5;
-    cv::recoverPose(E, points1, points2, K, R5, t5);
-
-    std::cout << "R5: " << R5 << std::endl;
-    std::cout << "t5: " << t5 << std::endl;
+    printf(" X \t Y \t Z \t\t X \t Y \t Z \n");
+    double scale = points3D.at<cv::Vec4d>(0)[2] / (points_trianguled.at<double>(2,0));
+    for(int i = 0; i < points_trianguled.cols; i++) {
+        cv::Mat p3d = points_trianguled.col(i);
+        cv::Vec4d in = points3D.at<cv::Vec4d>(i);
+        p3d = scale * p3d;
+        printf("%0.3f\t%0.3f\t%0.3f\t\t%0.3f\t%0.3f\t%0.3f\n",p3d.at<double>(0),p3d.at<double>(1),p3d.at<double>(2),in[0],in[1],in[2]);
+    }
+    std::cout <<std::endl;
+    cv::Mat Re,te;
+    cv::recoverPose(E, points1, points2, K, Re, te);
+    std::cout << "Rf: " << Rf << std::endl;
+    std::cout << "tf: " << scale*tf << std::endl;
+    std::cout << "Re: " << Re << std::endl;
+    std::cout << "te: " << scale*te << std::endl;
     return 1;
 }
 
@@ -229,6 +280,7 @@ Mat K = (Mat_<double>(3, 3) <<
 int main(int argc, char** argv)
 {
     main_test();
+    return 1;
 
     char filename1[200];
     sprintf(filename1, DATASET, 0);
